@@ -1,0 +1,183 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Configure CloudCustodian CodeBuild Role for deploying policies and Pipeline CodeCommit Repository
+Metadata:
+  LICENSE: >-
+    Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    
+    Permission is hereby granted, free of charge, to any person obtaining a copy of this
+    software and associated documentation files (the "Software"), to deal in the Software
+    without restriction, including without limitation the rights to use, copy, modify,
+    merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so.
+    
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+    INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+    HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE
+Parameters:
+  pCloudCustodianAdminRoleName:
+    Type: String
+    Default: CloudCustodianAdminRole
+    Description: Name for CloudCustodian Admin Role to be used by CloudCustodian CodeBuild Project in Admin Account to deploy policies accross all accounts
+  pCloudCustodianDeploymentRoleName:
+    Type: String
+    Default: CloudCustodianDeploymentRole
+    Description: Name for CloudCustodian Cross Account Role in Child Accounts for deploying policies
+  pCloudCustodianPipelineServiceRoleName:
+    Type: String
+    Default: CloudCustodianCodePipelineRole
+    Description: Name for CloudCustodian CodePipeline Service Role
+  pCodeCommitRepoName:
+    Type: String
+    Default: CloudCustodianCodeCommitRepo
+    Description: Name for the source CodeCommit Repository
+
+Resources:
+  rCloudCustodianPipelineArtifactS3Bucket: #pipeline artifact S3 bucket store
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub "cloudcustodian-pipeline-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+
+  rCloudCustodianCodeCommit:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref pCodeCommitRepoName
+  
+  rCloudCustodianCodeBuild: #pipeline codebuild project
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: CloudCustodianCodeBuild
+      Description: This project will be used in a CICD Pipeline for deploying cloud custodian policies accross Organization Accounts
+      ServiceRole: !Ref rCloudCustodianCodeBuildRole
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:4.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: CLOUD_CUSTODIAN_ROLE
+            Value: !Ref pCloudCustodianDeploymentRoleName
+          - Name: MANAGEMENT_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yaml
+      TimeoutInMinutes: 60
+  
+  rCloudCustodianCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref pCloudCustodianAdminRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "CloudCustodian-CodeBuild-Policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
+              - Effect: Allow 
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                Resource:
+                  - !Sub arn:aws:s3:::${rCloudCustodianPipelineArtifactS3Bucket}
+                  - !Sub arn:aws:s3:::${rCloudCustodianPipelineArtifactS3Bucket}/*
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::*:role/${pCloudCustodianDeploymentRoleName}
+              - Effect: Allow
+                Action:
+                  - organizations:ListRoots
+                  - organizations:ListOrganizationalUnitsForParent
+                  - organizations:ListAccountsForParent
+                  - organizations:ListTagsForResource
+                Resource: "*"
+  
+  rCloudCustodianCodePipelineRole: #Codepipeline service role
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Ref pCloudCustodianPipelineServiceRoleName
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: Codepipeline-Role-Policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow 
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:GetObjectVersion'
+                  - 's3:GetBucketVersioning'
+                Resource:
+                  - !Sub arn:aws:s3:::${rCloudCustodianPipelineArtifactS3Bucket}
+                  - !Sub arn:aws:s3:::${rCloudCustodianPipelineArtifactS3Bucket}/*
+              - Effect: Allow
+                Action:
+                  - codecommit:CancelUploadArchive
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:UploadArchive
+                Resource: !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${pCodeCommitRepoName}
+              - Effect: Allow
+                Action:
+                  - 'codebuild:BatchGetBuilds'
+                  - 'codebuild:StartBuild'
+                Resource: !GetAtt rCloudCustodianCodeBuild.Arn
+Outputs:
+  oCloudCustodianAdminRoleArn:
+    Description: Arn of the CloudCustodian Admin Role which will be used by CodeBuild
+    Value: !GetAtt rCloudCustodianCodeBuildRole.Arn
+  oCloudCustodianDeploymentRoleName:
+    Description: Name of the CloudCustodian Role to be deployed to all member accounts
+    Value: !Ref pCloudCustodianDeploymentRoleName
+  oCloudCustodianPipelineRoleArn:
+    Description: Arn of the CloudCustodian Pipeline Service Role which will be used by CodePipeline
+    Value: !GetAtt rCloudCustodianCodePipelineRole.Arn
+  oCloudCustodianPipelineArtifactStore:
+    Description: Artifact Store S3 Bucket for the CloudCustodian Pipeline
+    Value: !Ref rCloudCustodianPipelineArtifactS3Bucket
+  oCloudCustodianCodeBuildProject:
+    Description: Name of CloudCustodian CodeBuild Project
+    Value: !Ref rCloudCustodianCodeBuild 
+  oCloudCustodianCodeCommitName:
+    Description: Pipeline Source CodeCommit Repository Name
+    Value: !GetAtt rCloudCustodianCodeCommit.Name
+  oCloudCustodianCodeCommitCloneUrlHttp:
+    Description: Pipeline Source CodeCommit Repository HTTP Clone URL
+    Value: !GetAtt rCloudCustodianCodeCommit.CloneUrlHttp

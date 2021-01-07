@@ -1,0 +1,151 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Builds a CI/CD Pipeline to deploy Cloud Custodian Policies accross the organization.
+Metadata:
+  LICENSE: >-
+    Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    
+    Permission is hereby granted, free of charge, to any person obtaining a copy of this
+    software and associated documentation files (the "Software"), to deal in the Software
+    without restriction, including without limitation the rights to use, copy, modify,
+    merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so.
+    
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+    INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+    HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE
+Parameters:
+  pCloudCustodianPipelineRoleArn:
+    Type: String
+    Description: ARN for CloudCustodian CodePipeline Service Role
+  pCloudCustodianPipelineArtifactS3Bucket:
+    Type: String
+    Description: Name for the CloudCustodian Pipeline Artifact Store S3 Bucket
+  pCodeCommitRepositoryName:
+    Type: String
+    Description: Pipeline Source CodeCommit Repository
+  pCloudCustodianCodeBuildProject:
+    Type: String
+    Description: CloudCustodian CodeBuild Project 
+
+Resources:
+  rCloudCustodianCodePipeline: #CloudCustodian Deployment pipeline
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RestartExecutionOnUpdate: True
+      ArtifactStore:
+        Location: !Ref pCloudCustodianPipelineArtifactS3Bucket
+        Type: S3
+      RoleArn: !Ref pCloudCustodianPipelineRoleArn
+      Name: CloudCustodianPipeline
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: "1"
+              Configuration:
+                BranchName: master
+                RepositoryName: !Ref pCodeCommitRepositoryName
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: Source
+              RunOrder: 1
+        - Name: DeployCloudCustodianPolicies
+          Actions:
+            - Name: Deploy-Policies
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref pCloudCustodianCodeBuildProject
+              InputArtifacts:
+                - Name: Source
+              RunOrder: 1
+  
+  rAmazonCloudWatchEventRole: # Invoke Pipeline Event Rule
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: cwe-pipeline-execution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${rCloudCustodianCodePipeline}"
+
+  rPipelineTriggerRuleCodeCommit: #Deployment Pipeline Trigger for codecommit changes
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - 'CodeCommit Repository State Change'
+        resources:
+          - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${pCodeCommitRepositoryName}
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - master
+      Targets:
+        - Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${rCloudCustodianCodePipeline}"
+          RoleArn: !GetAtt rAmazonCloudWatchEventRole.Arn
+          Id: codepipeline-trigger-codecommit
+
+  rPipelineTriggerRuleControlTowerLifeCycleEvent: #Deployment Pipeline Trigger for new account creation
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Rule for lifecycle events from Control Tower Service
+      EventPattern:
+        {
+          "detail-type": [
+            "AWS Service Event via CloudTrail"
+          ],
+          "source": [
+              "aws.controltower"
+          ],
+          "detail": {
+              "eventName": [
+                  "CreateManagedAccount"
+              ],
+              "serviceEventDetails": {
+                "createManagedAccountStatus": {
+                  "state": [
+                    "SUCCEEDED"
+                  ]
+                }
+              }
+          }
+        }
+      State: ENABLED
+      Targets:
+        - Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${rCloudCustodianCodePipeline}"
+          RoleArn: !GetAtt rAmazonCloudWatchEventRole.Arn
+          Id: codepipeline-trigger-controltower-lifecycle-event
+
+Outputs:
+  oCodePipelineConsoleURL:
+    Description: AWS Console URL of the Pipeline
+    Value: !Sub https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${rCloudCustodianCodePipeline}/view?region=${AWS::Region}

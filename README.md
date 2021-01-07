@@ -1,11 +1,6 @@
-## My Project
+## Continous Deployment of Cloud Custodian to AWS Control Tower
 
-TODO: Fill this README out!
-
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+This repository provides sample code that demonstrates how AWS DevOps tools can be used achieve continuous deployment of Cloud Custodian policies at scale to AWS Control Tower
 
 ## Security
 

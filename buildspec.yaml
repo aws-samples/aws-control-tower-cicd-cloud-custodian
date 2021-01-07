@@ -1,0 +1,21 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      python: 3.7
+  pre_build:
+    commands:
+      - echo "Installing Cloud Custodian"
+      - pip install c7n
+      - pip install c7n-org
+      - export cloud_custodian_role="arn:aws:iam::{Id}:role/${CLOUD_CUSTODIAN_ROLE}"
+      - curl -LO https://raw.githubusercontent.com/cloud-custodian/cloud-custodian/master/tools/c7n_org/scripts/orgaccounts.py
+      - curl -LO https://raw.githubusercontent.com/cloud-custodian/cloud-custodian/master/tools/ops/mugc.py
+      - python orgaccounts.py -f accounts.yaml --role $cloud_custodian_role --active -r us-east-1 -i ${MANAGEMENT_ACCOUNT_ID}
+      - cat accounts.yaml
+  build:
+    commands:
+      - echo "Deploying Cloud Custodian Policies"
+      - for i in $(ls sample_policies); do c7n-org run -c accounts.yaml -s output -u sample_policies/$i; done
+      # - echo "Cleaning up Cloud Custodian Policy Resources"
+      # - for i in $(ls sample_policies); do c7n-org run-script -r us-east-1 -s output -c accounts.yaml "python3 mugc.py -c sample_policies/$i --present"; done

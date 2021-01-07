@@ -1,0 +1,16 @@
+policies:
+  - name: r53-querylogging-enabled
+    resource: hostedzone
+    mode:
+      type: periodic
+      role: "arn:aws:iam::{account_id}:role/CloudCustodianLambdaRole"
+      schedule: "cron(0 * * * ? *)"
+    description: |
+      Check Public Hosted zones without query logging enabled 
+    filters:
+      - type: query-logging-enabled
+        state: false
+    actions:
+      - type: set-query-logging
+        state: true
+        set-permissions: true

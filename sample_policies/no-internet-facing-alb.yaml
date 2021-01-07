@@ -1,0 +1,19 @@
+policies:
+  - name: no-internet-facing-alb 
+    resource: app-elb
+    mode:
+      type: cloudtrail
+      role: "arn:aws:iam::{account_id}:role/CloudCustodianLambdaRole"
+      events:
+        - source: elasticloadbalancing.amazonaws.com
+          event: CreateLoadBalancer
+          ids: responseElements.loadBalancers[].loadBalancerName
+    description: |
+      Deletes any public ALB created
+    filters:
+      - type: event
+        key: "detail.requestParameters.scheme"
+        op: eq
+        value: "internet-facing"
+    actions:
+      - type: delete

@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Configure Cross Account Cloud Custodian Role to Allow Admin Account Deployment of CloudCustodian Policies
+Metadata:
+  LICENSE: >-
+    Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    
+    Permission is hereby granted, free of charge, to any person obtaining a copy of this
+    software and associated documentation files (the "Software"), to deal in the Software
+    without restriction, including without limitation the rights to use, copy, modify,
+    merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so.
+    
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+    INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+    HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE
+Parameters:
+  pCloudCustodianAdminRoleArn:
+    Type: String
+    Description: CloudCustodian Admin Role in the Admin account used for assuming role into child accounts. This role should already exist in the admin account
+  pCloudCustodianDeploymentRoleName:
+    Type: String
+    Description: CloudCustodian Role name in Child Accounts used for deploying policies
+Resources:
+  rCloudCustodianLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CloudCustodianLambdaRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "Allow-CloudCustodian-Run"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowCloudCustodianLambdaLogging 
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/lambda/custodian-*"
+              - Sid: Route53RemediationsWrite
+                Effect: Allow
+                Action:
+                  - route53:ListTagsForResources                  
+                  - route53:CreateQueryLoggingConfig
+                Resource: "arn:aws:route53:::hostedzone/*"
+              - Sid: Route53RemediationsLoggingConfig
+                Effect: Allow
+                Action:
+                  - route53:GetQueryLoggingConfig
+                Resource: "arn:aws:route53:::queryloggingconfig/*"
+              - Sid: Route53RemediationsLogsRead
+                Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource: !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:*"
+              - Sid: Route53RemediationsLogsWrite
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                Resource: !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/route53/*"
+              - Sid: ALBRemediationsWrite
+                Effect: Allow
+                Action: 
+                  - elasticloadbalancing:ModifyLoadBalancerAttributes
+                  - elasticloadbalancing:RemoveTags
+                  - elasticloadbalancing:DeleteLoadBalancer
+                Resource: !Sub "arn:aws:elasticloadbalancing:*:${AWS::AccountId}:loadbalancer/app/*"
+              - Sid: OtherPermissionsRequired
+                Effect: Allow
+                Action: 
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeTags
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - route53:ListHostedZones
+                  - route53:ListQueryLoggingConfigs
+                Resource: "*"
+  
+  rCloudCustodianRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref pCloudCustodianDeploymentRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              AWS:
+                - !Ref pCloudCustodianAdminRoleArn
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "AllowDeploymentOfCloudCustodianLambda"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow 
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:AddPermission
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetPolicy
+                  - lambda:TagResource
+                Resource: !Sub "arn:${AWS::Partition}:lambda:*:${AWS::AccountId}:function:custodian-*"
+              - Effect: Allow 
+                Action:
+                  - lambda:ListFunctions
+                Resource: "*"
+              - Effect: Allow 
+                Action:
+                  - events:DescribeRule
+                  - events:PutRule
+                  - events:DeleteRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - events:EnableRule
+                  - events:TagResource
+                  - events:ListTargetsByRule
+                Resource: !Sub "arn:${AWS::Partition}:events:*:${AWS::AccountId}:rule/custodian-*"
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt rCloudCustodianLambdaRole.Arn
