@@ -16,6 +16,6 @@ phases:
   build:
     commands:
       - echo "Deploying Cloud Custodian Policies"
-      - for i in $(ls sample_policies); do c7n-org run -c accounts.yaml -s output -u sample_policies/$i; done
+      - for i in $(ls policies); do c7n-org run -c accounts.yaml -s output -u policies/$i; done
       # - echo "Cleaning up Cloud Custodian Policy Resources"
-      # - for i in $(ls sample_policies); do c7n-org run-script -r us-east-1 -s output -c accounts.yaml "python3 mugc.py -c sample_policies/$i --present"; done
+      # - for i in $(ls policies); do c7n-org run-script -r us-east-1 -s output -c accounts.yaml "python3 mugc.py -c policies/$i --present"; done
