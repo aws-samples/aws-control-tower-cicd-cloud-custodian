@@ -2,7 +2,7 @@
 
 This repository provides sample code that demonstrates how AWS DevOps tools can be used achieve continuous deployment of Cloud Custodian policies at scale to AWS Control Tower
 
-See this [post] (https://aws.amazon.com/blogs/opensource/continuous-deployment-of-cloud-custodian-to-aws-control-tower) for more information.
+See this [post](https://aws.amazon.com/blogs/opensource/continuous-deployment-of-cloud-custodian-to-aws-control-tower/) for more information
 
 ## Security
 
